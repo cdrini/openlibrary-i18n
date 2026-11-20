@@ -319,19 +319,19 @@ class TestOverlayTranslations:
 
 
 class TestDeRegress:
-    """de-regress restores openlibrary's LIVE translation wherever baking this
-    catalog would drop a string back to English — the bake-regression gating class
+    """de-regress restores the base branch's translation wherever this catalog
+    would drop a string back to English — the check-translations gating class
     that `fix` cannot repair. It must restore empty/english-copy msgstrs and never
     overwrite a contributor's genuine translation."""
 
     @staticmethod
     def _finding(lang, msgid, live, msgctxt=None):
         return {"kind": "regression", "gating": True, "lang": lang,
-                "msgid": msgid, "msgctxt": msgctxt, "openlibrary_msgstr": live}
+                "msgid": msgid, "msgctxt": msgctxt, "base_msgstr": live}
 
     def test_restores_english_copy_to_live(self):
         # The exact #212 case: sc 'LEADER:' shipped as an english-copy would
-        # regress openlibrary's live 'DIRETORE:' to English. de-regress restores it.
+        # regress the base's 'DIRETORE:' to English. de-regress restores it.
         cat = _catalog(_po('msgid "LEADER:"\nmsgstr "LEADER:"'))
         restored, skipped = _restore_live_in_catalog(
             cat, [self._finding("sc", "LEADER:", "DIRETORE:")])
@@ -347,7 +347,7 @@ class TestDeRegress:
 
     def test_never_overwrites_a_genuine_translation(self):
         # The safety invariant: if the catalog already carries a real translation,
-        # de-regress leaves it ALONE even if openlibrary's live value differs. A
+        # de-regress leaves it ALONE even if the base value differs. A
         # contributor's deliberate work is never clobbered. (Mutating the
         # _english_copy_or_empty guard to always-True makes this test fail — that is
         # the line it pins.)
@@ -565,11 +565,11 @@ class TestFixFormatErrorsPluralPlaceholders:
 
 class TestFixPluralPlaceholderDefects:
     """``./i18n fix`` self-heals the exact class that passes ``validate`` (it matches
-    the singular msgid) but FAILS the bake-regression gate: a plural form reused for
+    the singular msgid) but FAILS the check-translations gate: a plural form reused for
     n>1 that hardcodes the number instead of carrying msgid_plural's placeholder.
     This is the damage that hit id/ja/ko/ru/uk in PR #188.
 
-    Every case is proven against bake-regression's own detector — the same one the
+    Every case is proven against check-translations' own detector — the same one the
     CI gate runs — so the test cannot pass while the gate would still reject: the
     defect is flagged BEFORE the fix and gone AFTER. The header carries ``Language:``
     because the detector compiles the catalog to a .mo and reads the plural rule back
@@ -592,8 +592,8 @@ class TestFixPluralPlaceholderDefects:
         return _catalog(self.HEADER_JA + (self.MSGID + f'msgstr[0] "{msgstr0}"\n').encode())
 
     def _gate(self, cat):
-        """Findings from the exact detector the bake-regression check gates on."""
-        return _mod._bake_regression().find_placeholder_defects("ja", cat, self.LIVE)
+        """Findings from the exact detector check-translations gates on."""
+        return _mod._translation_checks().find_placeholder_defects("ja", cat, self.LIVE)
 
     def test_repairs_hardcoded_number_the_gate_rejects(self):
         cat = self._cat("%(value)s, sur 1 edition")  # dropped %(count)d, hardcoded 1

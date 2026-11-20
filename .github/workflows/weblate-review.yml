@@ -41,7 +41,7 @@ name: Weblate translation review
 #                    not speak. See weblate-review-instructions.md and the guard.)
 #              3. resolve + fix + de-regress produce content that:
 #                   - validates, compiles, passes the PO tests and check-scope, AND
-#                   - passes bake-regression IN-JOB (the exact deploy-clean gate),
+#                   - passes check-translations IN-JOB (the exact deploy-clean gate),
 #                     so nothing that would regress a live string can land.
 #
 # pull_request_target (not pull_request) so FORK PRs are covered too: a fork
@@ -244,12 +244,10 @@ jobs:
             ./i18n fix "$lang" || true
           done
 
-          # 2. Restore any live openlibrary translation this content would otherwise
-          #    drop to English (the bake-regression class ./i18n fix cannot repair).
-          #    Baseline = base branch, so only regressions THIS pr introduces are
-          #    touched; contributor translations are never overwritten.
-          ./i18n bake-regression --ref "origin/$BASE_REF" --json base.json || true
-          ./i18n de-regress "${LANGS[@]}" --openlibrary-ref master --baseline base.json
+          # 2. Restore any base-branch translation this content would otherwise
+          #    drop to English (the class ./i18n fix cannot repair). Contributor
+          #    translations are never overwritten.
+          ./i18n de-regress "${LANGS[@]}" --base "origin/$BASE_REF"
 
           # 3. Per-language validate + compile. Hold the PR open on any failure.
           for lang in "${LANGS[@]}"; do
@@ -273,11 +271,11 @@ jobs:
             fi
           done
 
-          # 5. FINAL GATE: the exact deploy-clean check (bake-regression), in-job,
-          #    against the healed working tree. This is the same check CI shows as
-          #    "Verify translations deploy cleanly"; running it here makes the land
-          #    decision authoritative without pushing-and-polling an external check.
-          if ! ./i18n bake-regression --locale-dir locale --openlibrary-ref master --baseline base.json; then
+          # 5. FINAL GATE: the exact deploy-clean check (check-translations), in-job,
+          #    against the healed working tree. This is the same check the
+          #    "validate" CI job runs; running it here makes the land decision
+          #    authoritative without pushing-and-polling an external check.
+          if ! ./i18n check-translations --base "origin/$BASE_REF" "${LANGS[@]}"; then
             gh pr comment "$PR" --body "Auto-heal ran but the translations still would not deploy cleanly after repair; leaving this PR open for a human. (This is a mechanical gate, independent of the review verdict.)"
             exit 0
           fi

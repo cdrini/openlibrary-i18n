@@ -22,7 +22,7 @@ Two modes, so the workflow can both wait for checks and then decide:
 Usage, from the workflow:
 
     gh pr checks "$pr" --json name,bucket \
-      | python3 scripts/merge_gate.py --require validate --require bake-regression
+      | python3 scripts/merge_gate.py --require validate
 
   exit 0  the mode's condition holds
   exit 1  it does not (reason on stderr)

@@ -3,7 +3,7 @@
 
 By the time this runs, the enforce job has produced a healed working tree that passed
 every mechanical gate (translation-only blast-radius, resolve/fix/de-regress, validate,
-compile, PO tests, check-scope, in-job bake-regression). The only question left is
+compile, PO tests, check-scope, in-job check-translations). The only question left is
 *how* to put that content on the base branch so the result looks like a normal
 contribution wherever GitHub allows it.
 

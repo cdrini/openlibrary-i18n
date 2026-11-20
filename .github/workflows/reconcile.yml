@@ -50,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ secrets.OL_BOT_I18N_PAT }}
         run: |
           set -euo pipefail
-          REQUIRE=(--require validate --require "Verify translations deploy cleanly")
+          REQUIRE=(--require validate)
           HELD_LABEL="reconcile: checks absent"
 
           # number<TAB>mergeStateStatus<TAB>headRefName for every open AI PR.

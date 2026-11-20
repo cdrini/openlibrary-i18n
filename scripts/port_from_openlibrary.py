@@ -98,7 +98,7 @@ def validators():
 
 
 def html_test():
-    """tests/test_po_files.py::test_html_format, the check validate-pr.yml runs."""
+    """tests/test_po_files.py::test_html_format, the check validate-translations.yml runs."""
     if "html" not in _modules:
         _modules["html"] = _load("i18n_test_po_files", REPO_ROOT / "tests" / "test_po_files.py")
     return _modules["html"].test_html_format

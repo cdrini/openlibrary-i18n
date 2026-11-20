@@ -1,11 +1,29 @@
 name: Validate translations
 
+# The one check translation changes must pass. merge_gate.py requires its
+# "validate" job before translate.yml / reconcile.yml merge an AI PR.
+#
+#   pull_request   the PR against its base branch
+#   push to main   the pushed commit against the one it replaced
+#   schedule       main against main as of 25 hours ago. translate.yml merges its
+#                  PRs with github.token, and pushes made with that token trigger
+#                  no workflows, so without this a bot merge is never checked on main.
+#   dispatch       every language, with nothing to compare against
 on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
   pull_request:
     paths:
       - "locale/**"
       - "messages.pot"
       - "i18n"
+      - "scripts/translation_checks.py"
+      - "tests/test_translation_checks.py"
+      - "tests/validators.py"
+      - ".github/workflows/validate-translations.yml"
       - "tests/test_i18n.py"
       - "tests/conftest.py"
       - "tests/test_locale_option.py"
@@ -28,25 +46,53 @@ jobs:
         with:
           python-version: "3.12"
 
+      # openlibrary pins Babel 2.18.0; check-translations compiles catalogs the way
+      # openlibrary does, so write_mo() must behave the same.
       - name: Install dependencies
-        run: pip install babel pytest
+        run: pip install "Babel==2.18.0" pytest
+
+      - name: Choose the commit to compare against
+        id: base
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request) git fetch -q origin "$BASE_REF"; BASE=$(git rev-parse "origin/$BASE_REF") ;;
+            push) BASE="$BEFORE" ;;
+            schedule) BASE=$(git rev-list -1 --before="25 hours ago" HEAD) ;;
+            *) BASE="" ;;
+          esac
+          # A new branch (all zeros) or no commit that old: check every language as is.
+          if [[ "$BASE" =~ ^0+$ ]] || ! git cat-file -e "${BASE:-none}^{commit}" 2>/dev/null; then
+            BASE=""
+          fi
+          echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+          echo "comparing against ${BASE:-nothing}"
 
       - name: Detect changed languages
         id: changed-langs
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
         run: |
-          git fetch origin ${{ github.base_ref }}
-          LANGS=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
-            | grep '^locale/' \
-            | cut -d/ -f2 \
-            | sort -u \
-            | tr '\n' ' ')
+          LANGS=""
+          if [ -n "$BASE" ]; then
+            LANGS=$(git diff --name-only "$BASE" HEAD \
+              | grep '^locale/' \
+              | cut -d/ -f2 \
+              | sort -u \
+              | tr '\n' ' ')
+          fi
           echo "langs=$LANGS" >> "$GITHUB_OUTPUT"
-          echo "Changed languages: $LANGS"
+          echo "Changed languages: ${LANGS:-none}"
 
       # A translation PR may only touch languages it actually translated. #188's
       # batch re-synced 5 languages that belonged to other PRs; when those merged
       # the batch went un-mergeably dirty and its real translations lingered.
       - name: Check scope (no stray languages)
+        if: github.event_name == 'pull_request'
         run: python ./i18n check-scope --base origin/${{ github.base_ref }}
 
       - name: Run test_po_files (HTML structure)
@@ -80,7 +126,8 @@ jobs:
       - name: Run plural-form and toolbox tests
         run: |
           python -m pytest tests/test_plural_forms.py tests/test_i18n.py tests/test_locale_option.py \
-            tests/test_po_same_content.py tests/test_meaning_check.py -q
+            tests/test_po_same_content.py tests/test_meaning_check.py \
+            tests/test_translation_checks.py -q
 
       - name: Validate format strings
         run: |
@@ -121,3 +168,12 @@ jobs:
           if errors_found:
               sys.exit(1)
           EOF
+
+      # What the olbase build would do with the changed languages: refuse a file
+      # (rejected), ship a broken placeholder, or show English where the base
+      # showed a translation. Without a base (a manual run), every language, with
+      # nothing to compare against.
+      - name: Check translations deploy cleanly
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
+        run: python ./i18n check-translations ${BASE:+--base "$BASE"}

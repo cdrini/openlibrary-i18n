@@ -110,7 +110,7 @@ because it's a distinct namespace — the two systems' branches never collide.
 It reaches `main` through `weblate-review.yml`, which lands **only** the PR from the
 branch named exactly `weblate` in this repository (not a fork's branch of that name):
 an abuse review, a translation-only file check, `resolve` + `fix` + `de-regress`, then
-validate, PO tests, `check-scope` and bake-regression, all in the job. No person
+validate, PO tests, `check-scope` and `check-translations`, all in the job. No person
 reviews it on GitHub, because Weblate gets stuck if its PR sits open while `main`
 moves on (#291). A `weblate/<lang>` branch is **not** landed automatically; it waits
 for a maintainer like any other PR. Every other translation PR (forks, staff branches)
@@ -264,7 +264,7 @@ actual diff, not inferred):
   from `nplurals=2; plural=(n >= 2);` to `nplurals=2; plural=n > 1;`. For integer
   `n` these select identically (`n ≥ 2` ⇔ `n > 1`), so there is no runtime change
   for `fr`; but any Weblate-touched file carries a `Plural-Forms` rewrite, which a
-  reviewer (and the `bake-regression` gate) should read from the *compiled*
+  reviewer (and the `check-translations` gate) should read from the *compiled*
   catalog, per the i18n-pipeline notes, rather than flag as a regression.
 
 **What this test does NOT cover** (needs the scoped PAT — see

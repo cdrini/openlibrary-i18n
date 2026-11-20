@@ -238,7 +238,7 @@ git commit -m "i18n({lang}): batch {N} — AI translations (claude-sonnet-5)"
 git push origin "$BRANCH"
 ```
 
-`validate-pr.yml` runs `./i18n check-scope` as a **required** check: if any changed
+`validate-translations.yml` runs `./i18n check-scope` as a **required** check: if any changed
 language did no real translation work (a stray from a broad sync), the PR goes red
 and will not merge. It also fails if the PR changes `messages.pot` (`sync-pot.yml` commits that to main). Run `./i18n check-scope` yourself before marking ready to catch
 it early. Push right after every commit, not just at the end of the run. This step is only reached after `validate` and `test` have both exited 0, so it's always pushing already-verified work. If the run gets cut off later (turn limit, error), everything up to this point survives on the remote branch — Step 2's resume check picks it up next time instead of losing it.

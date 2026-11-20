@@ -1,6 +1,6 @@
 """Tests for the --locale pytest option (tests/conftest.py).
 
-`./i18n test {lang}` and validate-pr.yml use it to run only some languages'
+`./i18n test {lang}` and validate-translations.yml use it to run only some languages'
 tests. It replaced `-k {lang}`, a substring match on the test id that also hit
 msgid text: "tr" matched every <strong>, "es" matched test_po_files itself (#302).
 """

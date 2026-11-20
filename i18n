@@ -24,9 +24,9 @@ Open Library i18n toolbox — ./i18n <command>
     [--base REF]         translation work (the stray-stub signature from #188).
   test <lang>            Run pytest tests/test_po_files.py -k <lang>.
   compile <lang>         Compile .po -> .mo via pybabel.
-  bake-regression        Would baking this repo into openlibrary turn translated
-    [--openlibrary-ref R] strings English or break placeholders? Exit 1 if so.
-    [--ref R] [--json P] See scripts/bake_regression.py --help.
+  check-translations     Would the changed languages deploy cleanly: no file the
+    [--base R] [<lang>]  build rejects, no broken placeholders, and no translated
+                         string lost vs R? See scripts/translation_checks.py --help.
 
 Environment:
   I18N_POT=<path>        Use this messages.pot instead of the repo's copy
@@ -693,37 +693,34 @@ def _english_copy_or_empty(string, msgid) -> bool:
     return string == msgid
 
 
-def de_regress(langs: list[str], openlibrary_ref: str = "master",
-               baseline_path: str | None = None) -> dict:
-    """Back-fill openlibrary's LIVE translations wherever baking this catalog would
-    regress a string to English.
+def de_regress(langs: list[str], base: str = "origin/main") -> dict:
+    """Restore `base`'s translations wherever this working tree would render a live
+    string in English that `base` renders translated.
 
-    The bake installs this repo's ``locale/<lang>/messages.po`` wholesale, so any
-    msgid openlibrary currently translates but this repo leaves empty or as an
-    english-copy would go back to English on deploy — a real loss the
-    bake-regression check gates on, and one ``fix`` cannot repair (the repair is
-    not a reformat, it is the missing translation, which lives in openlibrary). We
-    restore openlibrary's own live msgstr for exactly those msgids, and ONLY when
-    our side carries no genuine translation (empty / english-copy), so a
-    contributor's real work is never overwritten. Lossless by construction:
+    That loss is what check-translations gates on, and ``fix`` cannot repair it:
+    the missing text is the translation itself, which only `base` has. Restores
+    ONLY where our msgstr carries no genuine translation (empty / english-copy), so
+    a contributor's real work is never overwritten. Lossless by construction:
     translated count can only rise. Operates on the working tree. Returns stats.
     """
-    br = _bake_regression()
-    ol_source = br.OpenlibrarySource(openlibrary_ref)
-    baked_source = br.LocaleDirSource(LOCALE_DIR)
-    baseline = json.loads(Path(baseline_path).read_text()) if baseline_path else None
-    report = br.run(ol_source, baked_source, baseline)
-    # With a baseline, only NEW gating findings are ours to clear; without one,
-    # every gating finding. Either way: only true regressions, only target langs.
-    pool = report["new_findings"] if baseline is not None else report["findings"]
-    want = set(langs) if langs else None
+    import io
+    from dataclasses import asdict
+
+    from babel.messages.pofile import read_po
+
+    checks = _translation_checks()
+    with open(MESSAGES_POT, "rb") as f:
+        live = checks.live_keys_from_pot(read_po(f))
     fixes: dict[str, list[dict]] = {}
-    for f in pool:
-        if f.get("kind") != "regression" or not f.get("gating"):
+    for lang in langs or checks.changed_languages(base):
+        base_bytes = checks.base_catalog_bytes(base, lang)
+        if base_bytes is None or not (LOCALE_DIR / lang / "messages.po").exists():
             continue
-        if want is not None and f["lang"] not in want:
-            continue
-        fixes.setdefault(f["lang"], []).append(f)
+        base_cat = read_po(io.BytesIO(base_bytes))
+        found = [asdict(f) for f in checks.find_regressions(lang, base_cat, _read_po(lang), live)
+                 if f.gating]
+        if found:
+            fixes[lang] = found
 
     restored = skipped = 0
     for lang, findings in fixes.items():
@@ -739,7 +736,7 @@ def de_regress(langs: list[str], openlibrary_ref: str = "master",
 def _restore_live_in_catalog(catalog, findings) -> tuple[int, int]:
     """Pure core of de-regress (no IO, no network): apply regression findings to a
     catalog in place. For each finding, if our msgstr is empty/english-copy, replace
-    it with openlibrary's live msgstr; otherwise leave the contributor's work alone.
+    it with the base msgstr; otherwise leave the contributor's work alone.
     Returns (restored, skipped)."""
     restored = skipped = 0
     for f in findings:
@@ -748,7 +745,7 @@ def _restore_live_in_catalog(catalog, findings) -> tuple[int, int]:
         msg = catalog.get(f["msgid"], context=f.get("msgctxt"))
         if msg is None:
             continue
-        live = f.get("openlibrary_msgstr")
+        live = f.get("base_msgstr")
         if not _is_translated(live):
             continue
         if _english_copy_or_empty(msg.string, msg.id):
@@ -760,22 +757,22 @@ def _restore_live_in_catalog(catalog, findings) -> tuple[int, int]:
     return restored, skipped
 
 
-_bake_regression_mod = None
+_translation_checks_mod = None
 
 
-def _bake_regression():
-    """Lazy-load scripts/bake_regression.py so the pre-push repair reuses the EXACT
-    placeholder detector the bake-regression check gates on — the two cannot drift."""
-    global _bake_regression_mod
-    if _bake_regression_mod is None:
+def _translation_checks():
+    """Lazy-load scripts/translation_checks.py so repairs reuse the EXACT detectors
+    check-translations gates on — the two cannot drift."""
+    global _translation_checks_mod
+    if _translation_checks_mod is None:
         import importlib.util
-        path = REPO_ROOT / "scripts" / "bake_regression.py"
-        spec = importlib.util.spec_from_file_location("bake_regression", path)
+        path = REPO_ROOT / "scripts" / "translation_checks.py"
+        spec = importlib.util.spec_from_file_location("translation_checks", path)
         mod = importlib.util.module_from_spec(spec)
-        sys.modules["bake_regression"] = mod  # dataclasses resolve types via sys.modules
+        sys.modules["translation_checks"] = mod  # dataclasses resolve types via sys.modules
         spec.loader.exec_module(mod)
-        _bake_regression_mod = mod
-    return _bake_regression_mod
+        _translation_checks_mod = mod
+    return _translation_checks_mod
 
 
 def _repair_plural_form(form: str, missing: set[str]) -> str | None:
@@ -794,13 +791,13 @@ def _repair_plural_form(form: str, missing: set[str]) -> str | None:
 
 
 def _fix_plural_placeholder_defects(catalog, lang: str) -> tuple[list[str], list[str]]:
-    """Reuse bake-regression's detector to find plural forms whose %-placeholders
+    """Reuse check-translations' detector to find plural forms whose %-placeholders
     differ from the English they stand in for — the class that passes `validate`
-    (it matches the singular msgid) but fails the bake-regression gate (a form
+    (it matches the singular msgid) but fails the check-translations gate (a form
     reused for n>1 must carry msgid_plural's placeholders). Repair the mechanical
     case (hardcoded number -> %(count)d); clear the rest so they re-translate.
     Returns (repaired_msgids, cleared_msgids)."""
-    br = _bake_regression()
+    br = _translation_checks()
     forms = br.forms_selected(catalog)
     no_placeholders = (frozenset(), ())
     repaired: list[str] = []
@@ -974,19 +971,9 @@ def run_tests(lang: str) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
-def bake_regression(argv: list[str]) -> int:
-    import importlib.util
-    path = REPO_ROOT / "scripts" / "bake_regression.py"
-    spec = importlib.util.spec_from_file_location("bake_regression", path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["bake_regression"] = mod  # dataclasses resolve types via sys.modules
-    spec.loader.exec_module(mod)
-    return mod.main(argv)
-
-
 def main() -> None:
-    if sys.argv[1:2] == ["bake-regression"]:
-        sys.exit(bake_regression(sys.argv[2:]))
+    if sys.argv[1:2] == ["check-translations"]:
+        sys.exit(_translation_checks().main(sys.argv[2:]))
 
     parser = argparse.ArgumentParser(
         description="Open Library i18n toolbox",
@@ -1018,10 +1005,9 @@ def main() -> None:
     p.add_argument("incoming_po", help="Path to the incoming (contributor/PR) .po")
     p.add_argument("--base", default="origin/main")
 
-    p = sub.add_parser("de-regress", help="Restore openlibrary's live translations where the bake would regress to English")
-    p.add_argument("langs", nargs="*", help="Language codes to de-regress; omit for all")
-    p.add_argument("--openlibrary-ref", default="master")
-    p.add_argument("--baseline", default=None, help="A bake-regression --json report; only clear findings NEW vs it")
+    p = sub.add_parser("de-regress", help="Restore base translations that this working tree would drop to English")
+    p.add_argument("langs", nargs="*", help="Language codes to de-regress; omit for those changed vs --base")
+    p.add_argument("--base", default="origin/main")
 
     p = sub.add_parser("fix", help="Fix HTML attrs and format-string errors")
     p.add_argument("lang")
@@ -1081,9 +1067,8 @@ def main() -> None:
               f"translated (was {stats['before']}); no translations lost")
 
     elif args.cmd == "de-regress":
-        stats = de_regress(args.langs, openlibrary_ref=args.openlibrary_ref,
-                           baseline_path=args.baseline)
-        print(f"de-regress: restored {stats['restored']} live translation(s) "
+        stats = de_regress(args.langs, base=args.base)
+        print(f"de-regress: restored {stats['restored']} translation(s) "
               f"across {stats['langs'] or 'no langs'}; "
               f"{stats['skipped']} genuine translation(s) left untouched; "
               f"no translations lost")
