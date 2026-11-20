@@ -248,8 +248,8 @@ jobs:
           #    drop to English (the bake-regression class ./i18n fix cannot repair).
           #    Baseline = base branch, so only regressions THIS pr introduces are
           #    touched; contributor translations are never overwritten.
-          ./i18n bake-regression --ref "origin/$BASE_REF" --json base.json || true
-          ./i18n de-regress "${LANGS[@]}" --openlibrary-ref master --baseline base.json
+          ./i18n bake-regression --ref "origin/$BASE_REF" --shipped-ref "origin/$BASE_REF" --json base.json || true
+          ./i18n de-regress "${LANGS[@]}" --openlibrary-ref master --shipped-ref "origin/$BASE_REF" --baseline base.json
 
           # 3. Per-language validate + compile. Hold the PR open on any failure.
           for lang in "${LANGS[@]}"; do
@@ -277,7 +277,7 @@ jobs:
           #    against the healed working tree. This is the same check CI shows as
           #    "Verify translations deploy cleanly"; running it here makes the land
           #    decision authoritative without pushing-and-polling an external check.
-          if ! ./i18n bake-regression --locale-dir locale --openlibrary-ref master --baseline base.json; then
+          if ! ./i18n bake-regression --locale-dir locale --openlibrary-ref master --shipped-ref "origin/$BASE_REF" --baseline base.json; then
             gh pr comment "$PR" --body "Auto-heal ran but the translations still would not deploy cleanly after repair; leaving this PR open for a human. (This is a mechanical gate, independent of the review verdict.)"
             exit 0
           fi

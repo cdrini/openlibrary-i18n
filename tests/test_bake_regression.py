@@ -459,6 +459,61 @@ class TestCLI:
 FR_FORMS = "nplurals=2; plural=(n > 1);"
 
 
+def _commit_locale(repo: Path, side: dict) -> str:
+    """A git repo whose locale/<lang>/messages.po holds `side`; returns the commit."""
+    for lang, es in side.items():
+        (repo / "locale" / lang).mkdir(parents=True)
+        (repo / "locale" / lang / "messages.po").write_text(_po_text(*es))
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "shipped"], check=True)
+    return subprocess.run([*git, "rev-parse", "HEAD"], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+class TestShippedRef:
+    """The openlibrary side read from this repo at a ref, with no openlibrary .po files."""
+
+    def _side(self, tmp_path, shipped: dict, pot: list[str]):
+        ol_dir = tmp_path / "ol"
+        _pot(ol_dir, *pot)
+        repo = tmp_path / "shipped"
+        repo.mkdir()
+        sha = _commit_locale(repo, shipped)
+        return br.ShippedSource(br.DirectorySource(ol_dir), br.GitRefSource(sha, repo))
+
+    def test_dropping_a_shipped_translation_gates_then_passes(self, tmp_path):
+        side = self._side(tmp_path, {"es": [ENABLE]}, ['msgid "Enable"\nmsgstr ""'])
+        locale = tmp_path / "locale"
+        _write(locale, "es", [ENABLE_FUZZY])
+        assert br.run(side, br.LocaleDirSource(locale))["status"] == "fail"
+        (locale / "es" / "messages.po").write_text(_po_text(ENABLE))
+        assert br.run(side, br.LocaleDirSource(locale))["status"] == "pass"
+
+    def test_locale_not_shipped_yet_is_new_not_an_error(self, tmp_path):
+        side = self._side(tmp_path, {"es": [ENABLE]}, ['msgid "Enable"\nmsgstr ""'])
+        locale = tmp_path / "locale"
+        _write(locale, "es", [ENABLE])
+        _write(locale, "zz", [ENABLE])
+        report = br.run(side, br.LocaleDirSource(locale))
+        assert report["status"] == "pass"
+        [f] = [f for f in report["findings"] if f["lang"] == "zz"]
+        assert f["kind"] == "new_locale"
+
+    def test_cli_reads_translations_from_the_shipped_ref(self, tmp_path):
+        ol_dir = tmp_path / "ol"
+        _pot(ol_dir, 'msgid "Enable"\nmsgstr ""')
+        locale = tmp_path / "locale"
+        _write(locale, "es", [ENABLE])
+        out = _cli("--openlibrary-dir", ol_dir, "--shipped-ref", "HEAD",
+                   "--locale-dir", locale, "--json", "-")
+        assert out.returncode in (0, 1), out.stderr
+        head = subprocess.run(["git", "-C", str(_ROOT), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+        assert json.loads(out.stdout)["openlibrary"]["translations"]["sha"] == head
+
+
 def _write(root: Path, lang: str, entries: list[str], plural_forms=TWO_FORMS, language="de"):
     (root / lang).mkdir(parents=True, exist_ok=True)
     (root / lang / "messages.po").write_text(

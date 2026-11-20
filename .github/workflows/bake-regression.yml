@@ -2,6 +2,8 @@ name: Verify translations deploy cleanly
 
 # Would baking this repo into openlibrary (openlibrary#13070) turn strings that
 # openlibrary shows translated into English, or ship broken placeholders?
+# What openlibrary shows is this repo as baked, so both runs compare against the
+# commit before the change (--shipped-ref), with messages.pot from openlibrary.
 #
 # Each run compares a commit with the one before it, against one openlibrary
 # commit, and fails only on findings the earlier commit does not already have:
@@ -13,7 +15,8 @@ name: Verify translations deploy cleanly
 #   schedule       main vs main as of 25 hours ago. translate.yml merges its PRs
 #                  with github.token, and pushes made with that token trigger no
 #                  workflows, so without this a bot merge would never be measured.
-#   dispatch       absolute: fails if main has any gating finding
+#   dispatch       absolute: main against itself, so only findings that do not
+#                  depend on a comparison (rejected locales) gate
 
 on:
   pull_request:
@@ -102,6 +105,7 @@ jobs:
         run: |
           set +e
           ./i18n bake-regression --openlibrary-ref "${{ steps.ol.outputs.sha }}" \
+            --shipped-ref "${{ steps.base.outputs.sha }}" \
             --ref "${{ steps.base.outputs.sha }}" --json base.json > base.txt
           code=$?
           cat base.txt
@@ -114,6 +118,7 @@ jobs:
           BASELINE=""
           [ -f base.json ] && BASELINE="--baseline base.json"
           ./i18n bake-regression --openlibrary-ref "${{ steps.ol.outputs.sha }}" \
+            --shipped-ref "${{ steps.base.outputs.sha || 'HEAD' }}" \
             --ref HEAD $BASELINE --json head.json --list > head.txt
           code=$?
           {

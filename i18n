@@ -26,7 +26,8 @@ Open Library i18n toolbox — ./i18n <command>
   compile <lang>         Compile .po -> .mo via pybabel.
   bake-regression        Would baking this repo into openlibrary turn translated
     [--openlibrary-ref R] strings English or break placeholders? Exit 1 if so.
-    [--ref R] [--json P] See scripts/bake_regression.py --help.
+    [--shipped-ref R]    See scripts/bake_regression.py --help.
+    [--ref R] [--json P]
 
 Environment:
   I18N_POT=<path>        Use this messages.pot instead of the repo's copy
@@ -694,7 +695,7 @@ def _english_copy_or_empty(string, msgid) -> bool:
 
 
 def de_regress(langs: list[str], openlibrary_ref: str = "master",
-               baseline_path: str | None = None) -> dict:
+               baseline_path: str | None = None, shipped_ref: str | None = None) -> dict:
     """Back-fill openlibrary's LIVE translations wherever baking this catalog would
     regress a string to English.
 
@@ -709,7 +710,7 @@ def de_regress(langs: list[str], openlibrary_ref: str = "master",
     translated count can only rise. Operates on the working tree. Returns stats.
     """
     br = _bake_regression()
-    ol_source = br.OpenlibrarySource(openlibrary_ref)
+    ol_source = br.openlibrary_side(openlibrary_ref, shipped_ref=shipped_ref)
     baked_source = br.LocaleDirSource(LOCALE_DIR)
     baseline = json.loads(Path(baseline_path).read_text()) if baseline_path else None
     report = br.run(ol_source, baked_source, baseline)
@@ -1021,6 +1022,8 @@ def main() -> None:
     p = sub.add_parser("de-regress", help="Restore openlibrary's live translations where the bake would regress to English")
     p.add_argument("langs", nargs="*", help="Language codes to de-regress; omit for all")
     p.add_argument("--openlibrary-ref", default="master")
+    p.add_argument("--shipped-ref", default=None,
+                   help="Restore from this repo at REF instead of openlibrary's .po files")
     p.add_argument("--baseline", default=None, help="A bake-regression --json report; only clear findings NEW vs it")
 
     p = sub.add_parser("fix", help="Fix HTML attrs and format-string errors")
@@ -1082,7 +1085,7 @@ def main() -> None:
 
     elif args.cmd == "de-regress":
         stats = de_regress(args.langs, openlibrary_ref=args.openlibrary_ref,
-                           baseline_path=args.baseline)
+                           baseline_path=args.baseline, shipped_ref=args.shipped_ref)
         print(f"de-regress: restored {stats['restored']} live translation(s) "
               f"across {stats['langs'] or 'no langs'}; "
               f"{stats['skipped']} genuine translation(s) left untouched; "

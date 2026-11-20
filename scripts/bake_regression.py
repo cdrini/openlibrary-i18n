@@ -4,7 +4,7 @@ Bake-regression check: if olbase baked this repo today, which strings that
 openlibrary currently shows translated would render in English, and which
 baked msgstrs have broken %-placeholders?
 
-  ./i18n bake-regression [--openlibrary-ref master] [--ref HEAD] [--json out.json]
+  ./i18n bake-regression [--openlibrary-ref master] [--shipped-ref REF] [--ref HEAD] [--json out.json]
 
 What "baking" means here is openlibrary#13070 as of 26b45e8: at image build,
 install_translations() copies locale/<lang>/messages.po from this repo over
@@ -41,6 +41,11 @@ not only by entry: a new defect on an entry that already has one is new.
 
 Only msgids in openlibrary's messages.pot at the compared ref are considered;
 translations of msgids no template requests are never rendered.
+
+"openlibrary" above means the translations production serves. Since olbase bakes
+this repo, that is this repo at an earlier commit, not openlibrary's committed
+.po files: pass --shipped-ref (e.g. the commit a change is merged into) to read
+the translations from there while still taking messages.pot from openlibrary.
 
 Exit status: 0 no gating findings, 1 gating findings (with --baseline, only
 those the baseline does not already include), 2 the check could not run
@@ -531,6 +536,40 @@ class LocaleDirSource(DirectorySource):
     """A locale/ directory on disk, for checking uncommitted work."""
 
 
+class ShippedSource:
+    """The openlibrary side, with this repo's locale/ at a ref as its translations.
+
+    messages.pot still comes from openlibrary, which is where strings are extracted.
+    """
+
+    def __init__(self, pot_source, translations: GitRefSource):
+        self.pot_source = pot_source
+        self.translations = translations
+        self._languages = set(translations.languages())
+
+    def describe(self) -> dict:
+        return {**self.pot_source.describe(), "translations": self.translations.describe()}
+
+    def fetch(self, path: str) -> bytes | None:
+        if path == "messages.pot":
+            return self.pot_source.fetch(path)
+        lang = path.split("/", 1)[0]
+        return self.translations.fetch(path) if lang in self._languages else None
+
+    def languages(self) -> list[str]:
+        return sorted(self._languages)
+
+
+def openlibrary_side(openlibrary_ref: str = "master", openlibrary_dir: Path | None = None,
+                     shipped_ref: str | None = None):
+    """The source run() compares the baked side against."""
+    pot_source = (DirectorySource(openlibrary_dir) if openlibrary_dir
+                  else OpenlibrarySource(openlibrary_ref))
+    if shipped_ref is None:
+        return pot_source
+    return ShippedSource(pot_source, GitRefSource(shipped_ref))
+
+
 def _github_headers() -> dict:
     headers = {"Accept": "application/vnd.github+json"}
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -798,6 +837,10 @@ def format_report(report: dict) -> str:
     ol, baked, totals = report["openlibrary"], report["baked"], report["totals"]
     lines.append(f"openlibrary: {ol.get('repo', '')}@{ol.get('sha') or ol.get('dir')}"
                  + (f" ({ol['ref']})" if ol.get("ref") else ""))
+    if ol.get("translations"):
+        shipped = ol["translations"]
+        lines.append(f"shipped:     openlibrary-i18n@{shipped['sha']} ({shipped['ref']}),"
+                     " standing in for openlibrary's translations")
     lines.append(f"baked:       openlibrary-i18n@{baked.get('sha') or baked.get('dir')}"
                  + (f" ({baked['ref']})" if baked.get("ref") else ""))
     lines.append(f"live msgids in openlibrary messages.pot: {report['live_msgids']}")
@@ -872,6 +915,9 @@ def main(argv: list[str] | None = None) -> int:
                        help="git ref of this repo to bake (default: HEAD)")
     baked.add_argument("--locale-dir", type=Path,
                        help="a locale/ directory on disk, e.g. uncommitted work")
+    parser.add_argument("--shipped-ref", metavar="REF",
+                        help="git ref of this repo whose translations production serves; "
+                             "compare against those instead of openlibrary's .po files")
     parser.add_argument("--json", type=Path, metavar="PATH",
                         help="write the machine-readable report here ('-' for stdout)")
     parser.add_argument("--baseline", type=Path, metavar="PATH",
@@ -880,8 +926,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        ol_source = (DirectorySource(args.openlibrary_dir) if args.openlibrary_dir
-                     else OpenlibrarySource(args.openlibrary_ref))
+        ol_source = openlibrary_side(args.openlibrary_ref, args.openlibrary_dir, args.shipped_ref)
         baked_source = (LocaleDirSource(args.locale_dir) if args.locale_dir
                         else GitRefSource(args.ref))
         baseline = json.loads(args.baseline.read_text()) if args.baseline else None
